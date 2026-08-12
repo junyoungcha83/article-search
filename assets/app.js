@@ -9,6 +9,7 @@ const K_MODEL = 'as-model';
 const K_NOEFFORT = 'as-no-effort';    // effort 를 거부한 모델 기록 — 다음부터 안 보냄
 const K_BASICTOOLS = 'as-basic-tools'; // 최신 웹검색 도구를 거부한 모델 기록
 const K_USAGE = 'as-usage';         // 실제 사용량 기록 [{at, kind, model, cost, in, out, searches}]
+const K_ORDER = 'as-sec-order';     // 검색 결과 카드 순서 (드래그로 바꾼 값)
 const K_RECENT = 'as-recent';       // { search: [...], url: [...] }
 const K_CACHE = 'as-cache';         // { "s:키워드": {at, data}, "u:링크": {at, data} }
 const CACHE_TTL = 6 * 60 * 60 * 1000;   // 6시간 — 같은 검색을 다시 열 때 요금이 또 나가지 않게
@@ -299,6 +300,19 @@ function linkList(items) {
 }
 function hostOf(u) { try { return new URL(u).hostname.replace(/^www\./, ''); } catch (_) { return ''; } }
 
+// 카드 제목줄(h3)을 잡고 끌면 순서를 바꿀 수 있다. 바꾼 순서는 다음 검색에도 이어진다.
+const DEFAULT_ORDER = ['core', 'outlets', 'facts', 'kid', 'sources'];
+function getOrder() {
+  const o = loadJSON(K_ORDER, null);
+  if (!Array.isArray(o) || o.length !== DEFAULT_ORDER.length
+      || !DEFAULT_ORDER.every(k => o.includes(k))) return DEFAULT_ORDER.slice();
+  return o;
+}
+function sec(key, cls, title, inner) {
+  return `<section class="sec ${cls}" data-sec="${key}">
+    <h3>${title}<span class="grip" aria-hidden="true">⋮⋮</span></h3>${inner}</section>`;
+}
+
 function renderSearch(box, d, fallbackLinks) {
   const outlets = (d.outlets || []).filter(o => o && o.name);
   const facts = (d.common_facts || []).filter(Boolean);
@@ -306,21 +320,101 @@ function renderSearch(box, d, fallbackLinks) {
   if (!sources.length && fallbackLinks && fallbackLinks.length) {
     sources = fallbackLinks.slice(0, 6).map(l => ({ title: l.title, url: l.url }));
   }
-  box.innerHTML =
-    `<h2 class="topic">${esc(d.topic || '')}</h2>` +
-    (d.core ? `<section class="sec"><h3>📌 핵심 내용</h3><p>${esc(d.core)}</p></section>` : '') +
-    (outlets.length ? `<section class="sec s-outlet"><h3>📰 언론사별 비교</h3>
+
+  const blocks = {
+    core: d.core ? sec('core', '', '📌 핵심 내용', `<p>${esc(d.core)}</p>`) : '',
+    outlets: outlets.length ? sec('outlets', 's-outlet', '📰 언론사별 비교', `
       <div class="outlets">${outlets.map(o => `
         <div class="ot">
           <div class="ot-name">${esc(o.name)}</div>
           <p class="ot-angle">${esc(o.angle || '')}</p>
           ${o.url ? `<a href="${esc(o.url)}" target="_blank" rel="noopener noreferrer">기사 보기 ↗</a>` : ''}
-        </div>`).join('')}</div></section>` : '') +
-    (facts.length ? `<section class="sec s-fact"><h3>✅ 공통 팩트</h3>
-      <ul class="bul">${facts.map(f => `<li>${esc(f)}</li>`).join('')}</ul></section>` : '') +
-    (d.kid ? `<section class="sec s-kid"><h3>🧒 초등학생이 이해하기 쉬운 설명</h3><p>${esc(d.kid)}</p></section>` : '') +
-    (sources.length ? `<section class="sec"><h3>🔗 참고한 기사</h3>${linkList(sources)}</section>` : '') +
+        </div>`).join('')}</div>`) : '',
+    facts: facts.length ? sec('facts', 's-fact', '✅ 공통 팩트',
+      `<ul class="bul">${facts.map(f => `<li>${esc(f)}</li>`).join('')}</ul>`) : '',
+    kid: d.kid ? sec('kid', 's-kid', '🧒 초등학생이 이해하기 쉬운 설명', `<p>${esc(d.kid)}</p>`) : '',
+    sources: sources.length ? sec('sources', '', '🔗 참고한 기사', linkList(sources)) : '',
+  };
+
+  box.innerHTML =
+    `<h2 class="topic">${esc(d.topic || '')}</h2>` +
+    `<p class="drag-hint">⋮⋮ 제목을 손가락으로 끌면 순서를 바꿀 수 있어요</p>` +
+    `<div class="secs" id="secs">${getOrder().map(k => blocks[k] || '').join('')}</div>` +
     (d.note ? `<p class="note">ℹ️ ${esc(d.note)}</p>` : '');
+
+  bindReorder($('secs'));
+}
+
+// ── 카드 순서 바꾸기(드래그) ─────────────────
+// 제목줄에서만 시작한다 — 본문에서는 평소처럼 스크롤되게.
+function bindReorder(list) {
+  if (!list) return;
+  let drag = null;
+
+  const flip = (mutate, skip) => {          // 다른 카드들이 툭 튀지 않고 미끄러지게
+    const els = [...list.children];
+    const before = new Map(els.map(el => [el, el.getBoundingClientRect().top]));
+    mutate();
+    for (const el of els) {
+      if (el === skip) continue;
+      const dy = before.get(el) - el.getBoundingClientRect().top;
+      if (!dy) continue;
+      el.style.transition = 'none';
+      el.style.transform = `translateY(${dy}px)`;
+      requestAnimationFrame(() => {
+        el.style.transition = 'transform .18s ease';
+        el.style.transform = '';
+      });
+    }
+  };
+
+  list.addEventListener('pointerdown', e => {
+    const head = e.target.closest('h3');
+    if (!head || head.parentElement.parentElement !== list) return;
+    const el = head.parentElement;
+    drag = { el, startY: e.clientY };
+    el.classList.add('dragging');
+    try { el.setPointerCapture(e.pointerId); } catch (_) {}
+    e.preventDefault();
+  });
+
+  list.addEventListener('pointermove', e => {
+    if (!drag) return;
+    e.preventDefault();
+    drag.el.style.transform = `translateY(${e.clientY - drag.startY}px)`;
+
+    for (const other of list.children) {
+      if (other === drag.el) continue;
+      const r = other.getBoundingClientRect();
+      if (e.clientY < r.top || e.clientY > r.bottom) continue;
+      const down = e.clientY > r.top + r.height / 2;
+      const visualTop = drag.el.getBoundingClientRect().top;
+      flip(() => { down ? other.after(drag.el) : other.before(drag.el); }, drag.el);
+      // DOM 위치가 바뀌어도 카드가 손가락 아래 그대로 있도록 기준점을 다시 잡는다
+      drag.el.style.transform = '';
+      drag.startY = e.clientY - (visualTop - drag.el.getBoundingClientRect().top);
+      drag.el.style.transform = `translateY(${e.clientY - drag.startY}px)`;
+      break;
+    }
+
+    const m = 70, vh = window.innerHeight;      // 화면 끝에 닿으면 따라 스크롤
+    if (e.clientY < m) window.scrollBy(0, -12);
+    else if (e.clientY > vh - m) window.scrollBy(0, 12);
+  });
+
+  const end = () => {
+    if (!drag) return;
+    drag.el.classList.remove('dragging');
+    drag.el.style.transition = 'transform .16s ease';
+    drag.el.style.transform = '';
+    setTimeout(() => { if (drag) drag.el.style.transition = ''; }, 180);
+    const order = [...list.children].map(el => el.dataset.sec).filter(Boolean);
+    // 이번 결과에 없는 항목은 기존 순서를 지켜 뒤에 붙인다
+    saveJSON(K_ORDER, order.concat(getOrder().filter(k => !order.includes(k))));
+    drag = null;
+  };
+  list.addEventListener('pointerup', end);
+  list.addEventListener('pointercancel', end);
 }
 
 function renderDigest(box, d) {
@@ -457,9 +551,12 @@ function renderInfo() {
           30초~1분쯤 걸립니다.</li>
         <li><b>기사요약</b> — 읽던 기사의 주소를 복사해 붙여넣고 요약을 누르면
           <b>제목과 핵심 내용</b>을 간추리고 <b>관련 기사 링크</b>를 같이 보여줘요.</li>
+        <li>검색 결과의 <b>카드 제목줄(⋮⋮)을 손가락으로 끌면</b> 순서를 바꿀 수 있어요.
+          바꾼 순서는 다음 검색에도 그대로 이어집니다. 카드 본문은 평소처럼 스크롤돼요.</li>
         <li>입력칸 아래 <b>최근 목록</b>을 누르면 지난 검색을 다시 볼 수 있어요.</li>
         <li>결과의 <b>기사 보기 ↗</b> 를 누르면 원문으로 갑니다. 중요한 내용은 원문으로 확인하세요.</li>
       </ol>
+      <button class="ghost wide" id="infoOrderBtn" type="button">↕︎ 카드 순서 처음으로 되돌리기</button>
       <h3 style="margin-top:14px">💡 알아두면 좋은 것</h3>
       <ul class="bul">
         <li>API 키는 <b>이 기기에만</b> 저장돼요. 다른 기기에서는 ⚙︎ 에서 한 번 더 넣어야 합니다.</li>
@@ -471,6 +568,12 @@ function renderInfo() {
     </section>`;
 
   const mb = $('infoModelBtn'); if (mb) mb.onclick = openSheet;
+  const ob = $('infoOrderBtn');
+  if (ob) ob.onclick = () => {
+    localStorage.removeItem(K_ORDER);
+    ob.textContent = '↩︎ 처음 순서로 되돌렸어요';
+    setTimeout(() => { ob.textContent = '↕︎ 카드 순서 처음으로 되돌리기'; }, 1800);
+  };
 }
 
 // ── 탭 · 설정 ────────────────────────────────

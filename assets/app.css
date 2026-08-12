@@ -114,7 +114,24 @@ body {
 .sec > h3 {
   margin: 0 0 8px; font-size: .95rem; font-weight: 800; color: var(--accent);
   display: flex; align-items: center; gap: 6px;
+  /* 제목줄이 드래그 손잡이 — 브라우저 기본 스크롤/선택을 막아야 손가락 드래그가 먹는다 */
+  touch-action: none; cursor: grab;
+  user-select: none; -webkit-user-select: none;
+  margin-left: -4px; margin-right: -4px; padding: 2px 4px 6px; border-radius: 8px;
 }
+.sec > h3:active { cursor: grabbing; background: var(--bg) }
+.grip {
+  margin-left: auto; letter-spacing: -3px; font-size: 1.05rem;
+  color: var(--muted); opacity: .5; padding-left: 8px;
+}
+.drag-hint { margin: -6px 0 10px; font-size: .76rem; color: var(--muted) }
+.secs { position: relative }
+.sec.dragging {
+  position: relative; z-index: 5; cursor: grabbing;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, .22);
+  transform-origin: center;
+}
+.sec.dragging > h3 { background: var(--bg) }
 .sec p { margin: 0; font-size: .95rem }
 .sec.s-outlet { border-left-color: var(--outlet) } .sec.s-outlet > h3 { color: var(--outlet) }
 .sec.s-fact   { border-left-color: var(--fact) }   .sec.s-fact > h3   { color: var(--fact) }
