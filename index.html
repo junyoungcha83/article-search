@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>기사검색</title>
+<link rel="stylesheet" href="assets/app.css?v=1" />
+
+<!-- PWA -->
+<link rel="manifest" href="manifest.webmanifest" />
+<meta name="theme-color" content="#0f172a" />
+<link rel="icon" type="image/svg+xml" href="assets/icon.svg" />
+
+<!-- iOS 홈 화면 추가 -->
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<meta name="apple-mobile-web-app-title" content="기사검색" />
+<link rel="apple-touch-icon" href="assets/icon.svg" />
+</head>
+<body>
+
+<header class="app-header">
+  <h1>기사검색</h1>
+  <button class="hdr-btn" id="settingsBtn" type="button" aria-label="설정">⚙︎</button>
+</header>
+
+<nav class="viewtabs" id="viewtabs" role="tablist" aria-label="보기 전환">
+  <button class="vtab active" data-view="search" role="tab" aria-selected="true">🔎 검색 및 분석</button>
+  <button class="vtab" data-view="digest" role="tab" aria-selected="false">🔎 기사요약</button>
+</nav>
+
+<!-- ── 검색 및 분석 ───────────────────────────── -->
+<div class="view" id="view-search">
+  <form class="inputbar" id="searchForm">
+    <input class="tf" id="q" type="search" inputmode="search" enterkeyhint="search"
+           placeholder="검색어를 입력하세요 (예: 기준금리)" autocomplete="off" />
+    <button class="go" type="submit">검색</button>
+  </form>
+  <div class="recent" id="recent"></div>
+  <main class="result" id="searchResult">
+    <div class="hint-card">
+      <b>검색어를 넣으면</b> 최신 기사를 찾아 <b>핵심 내용 · 언론사별 비교 · 공통 팩트 ·
+      초등학생 눈높이 설명</b>으로 정리해 줘요.
+    </div>
+  </main>
+</div>
+
+<!-- ── 기사요약 ──────────────────────────────── -->
+<div class="view hidden" id="view-digest">
+  <form class="inputbar" id="digestForm" novalidate>
+    <input class="tf" id="url" type="url" inputmode="url" enterkeyhint="go"
+           placeholder="기사 링크를 붙여넣으세요 (https://…)" autocomplete="off" />
+    <button class="go" type="submit">요약</button>
+  </form>
+  <div class="recent" id="recentUrl"></div>
+  <main class="result" id="digestResult">
+    <div class="hint-card">
+      <b>기사 링크를 붙여넣으면</b> <b>제목과 핵심 내용</b>을 요약하고,
+      <b>관련 기사 링크</b>를 참고용으로 함께 보여줘요.
+    </div>
+  </main>
+</div>
+
+<!-- ── 설정 시트 ─────────────────────────────── -->
+<div class="sheet hidden" id="sheet">
+  <div class="sheet-box">
+    <div class="sheet-head"><h2>설정</h2><button class="sheet-x" id="sheetClose" type="button">✕</button></div>
+
+    <label class="fld">
+      <span>Anthropic API 키</span>
+      <input class="tf" id="apiKey" type="password" placeholder="sk-ant-…" autocomplete="off" />
+      <small>이 기기에만 저장돼요(localStorage). 브라우저에서 Anthropic 서버로 바로 보냅니다.
+        공용 기기에서는 쓰지 말고, 필요 없어지면 콘솔에서 키를 폐기하세요.</small>
+    </label>
+
+    <label class="fld">
+      <span>모델</span>
+      <select class="tf" id="model">
+        <option value="claude-opus-5">Claude Opus 5 — 가장 똑똑함 (기본)</option>
+        <option value="claude-sonnet-5">Claude Sonnet 5 — 빠르고 저렴</option>
+        <option value="claude-haiku-4-5">Claude Haiku 4.5 — 가장 저렴</option>
+      </select>
+      <small>검색 1회에 웹검색 비용($0.01)과 토큰 비용이 듭니다. 자주 쓰면 Sonnet을 권해요.</small>
+    </label>
+
+    <div class="sheet-btns">
+      <button class="go" id="saveKey" type="button">저장</button>
+      <button class="ghost" id="clearCache" type="button">저장된 결과 지우기</button>
+    </div>
+    <p class="sheet-note">키 발급: <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">console.anthropic.com ↗</a></p>
+  </div>
+</div>
+
+<script src="assets/app.js?v=1"></script>
+<script>
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+  }
+</script>
+</body>
+</html>

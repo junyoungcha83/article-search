@@ -1,0 +1,16 @@
+{
+  "name": "기사검색",
+  "short_name": "기사검색",
+  "description": "키워드 검색·분석과 기사 링크 요약 — 언론사별 비교, 공통 팩트, 초등학생 눈높이 설명",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f1f5f9",
+  "theme_color": "#0f172a",
+  "lang": "ko",
+  "icons": [
+    { "src": "assets/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "assets/icon-maskable.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}

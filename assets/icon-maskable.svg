@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" role="img" aria-label="기사검색">
+  <rect width="192" height="192" fill="#0f172a"/>
+  <rect x="50" y="52" width="76" height="86" rx="8" fill="#f8fafc"/>
+  <rect x="61" y="65" width="54" height="9" rx="4.5" fill="#0f172a"/>
+  <rect x="61" y="82" width="54" height="6" rx="3" fill="#cbd5e1"/>
+  <rect x="61" y="94" width="54" height="6" rx="3" fill="#cbd5e1"/>
+  <rect x="61" y="106" width="36" height="6" rx="3" fill="#cbd5e1"/>
+  <circle cx="120" cy="110" r="25" fill="none" stroke="#2563eb" stroke-width="11"/>
+  <line x1="138" y1="128" x2="152" y2="142" stroke="#2563eb" stroke-width="12" stroke-linecap="round"/>
+</svg>
