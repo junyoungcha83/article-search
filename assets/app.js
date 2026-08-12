@@ -6,6 +6,7 @@
 const API_URL = 'https://api.anthropic.com/v1/messages';
 const K_KEY = 'as-api-key';
 const K_MODEL = 'as-model';
+const K_NOEFFORT = 'as-no-effort';  // effort 를 거부한 모델 기록 — 다음부터 안 보냄
 const K_RECENT = 'as-recent';       // { search: [...], url: [...] }
 const K_CACHE = 'as-cache';         // { "s:키워드": {at, data}, "u:링크": {at, data} }
 const CACHE_TTL = 6 * 60 * 60 * 1000;   // 6시간 — 같은 검색을 다시 열 때 요금이 또 나가지 않게
@@ -18,6 +19,13 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => (
 
 const getKey = () => localStorage.getItem(K_KEY) || '';
 const getModel = () => localStorage.getItem(K_MODEL) || 'claude-opus-5';
+
+// effort(응답 깊이 조절)는 모델마다 지원 여부가 다르다. Haiku 4.5 는 지원하지 않고,
+// 계정·모델에 따라 거부되는 경우도 있어 400 이 오면 그 모델을 기억해 두고 빼고 재시도한다.
+const EFFORT_MODELS = { 'claude-opus-5': 1, 'claude-sonnet-5': 1 };
+const effortBlocked = m => (loadJSON(K_NOEFFORT, {})[m] === true);
+function blockEffort(m) { const o = loadJSON(K_NOEFFORT, {}); o[m] = true; saveJSON(K_NOEFFORT, o); }
+const useEffort = m => !!EFFORT_MODELS[m] && !effortBlocked(m);
 
 function loadJSON(k, dflt) {
   try { return JSON.parse(localStorage.getItem(k) || '') ?? dflt; } catch (_) { return dflt; }
@@ -66,28 +74,26 @@ async function callClaude({ system, userText, tools, maxContinuations = 4 }) {
   const key = getKey();
   if (!key) throw new AppError('API 키가 없어요', '오른쪽 위 ⚙︎ 에서 Anthropic API 키를 넣어 주세요.');
 
+  const model = getModel();
   let messages = [{ role: 'user', content: userText }];
   let out = [], searchLinks = [];
 
   for (let i = 0; i <= maxContinuations; i++) {
-    const res = await fetch(API_URL, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': key,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true',
-      },
-      body: JSON.stringify({
-        model: getModel(),
-        max_tokens: 16000,
-        output_config: { effort: 'medium' },
-        system,
-        tools,
-        messages,
-      }),
-    }).catch(e => { throw new AppError('네트워크 오류', '인터넷 연결을 확인해 주세요. (' + e.message + ')'); });
+    const body = { model, max_tokens: 16000, system, tools, messages };
+    if (useEffort(model)) body.output_config = { effort: 'medium' };
 
+    let res = await postJSON(key, body);
+    // 이 모델이 effort 를 거부하면 기록해 두고 즉시 다시 보낸다(사용자에겐 그냥 성공한 것처럼 보임)
+    if (res.status === 400 && body.output_config) {
+      const msg = await peekError(res);
+      if (/effort/i.test(msg)) {
+        blockEffort(model);
+        delete body.output_config;
+        res = await postJSON(key, body);
+      } else {
+        throw errorFor(400, msg);
+      }
+    }
     if (!res.ok) throw await httpError(res);
     const data = await res.json();
 
@@ -117,15 +123,30 @@ async function callClaude({ system, userText, tools, maxContinuations = 4 }) {
 class AppError extends Error {
   constructor(title, detail) { super(title); this.title = title; this.detail = detail || ''; }
 }
-async function httpError(res) {
-  let msg = '';
-  try { const j = await res.json(); msg = (j.error && j.error.message) || ''; } catch (_) {}
-  if (res.status === 401) return new AppError('API 키가 올바르지 않아요', '⚙︎ 설정에서 키를 다시 확인해 주세요.');
-  if (res.status === 403) return new AppError('권한이 없어요', msg || '이 키로는 이 모델을 쓸 수 없어요.');
-  if (res.status === 429) return new AppError('요청이 너무 많아요', '잠시 뒤에 다시 시도해 주세요.');
-  if (res.status >= 500) return new AppError('서버가 바빠요', '잠시 뒤에 다시 시도해 주세요. (' + res.status + ')');
-  return new AppError('요청 실패 (' + res.status + ')', msg);
+function postJSON(key, body) {
+  return fetch(API_URL, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': key,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify(body),
+  }).catch(e => { throw new AppError('네트워크 오류', '인터넷 연결을 확인해 주세요. (' + e.message + ')'); });
 }
+async function peekError(res) {
+  try { const j = await res.json(); return (j.error && j.error.message) || ''; } catch (_) { return ''; }
+}
+function errorFor(status, msg) {
+  if (status === 401) return new AppError('API 키가 올바르지 않아요', '⚙︎ 설정에서 키를 다시 확인해 주세요.');
+  if (status === 403) return new AppError('권한이 없어요', msg || '이 키로는 이 모델을 쓸 수 없어요.');
+  if (status === 404) return new AppError('모델을 찾을 수 없어요', '⚙︎ 설정에서 다른 모델을 골라 보세요. ' + msg);
+  if (status === 429) return new AppError('요청이 너무 많아요', '잠시 뒤에 다시 시도해 주세요.');
+  if (status >= 500) return new AppError('서버가 바빠요', '잠시 뒤에 다시 시도해 주세요. (' + status + ')');
+  return new AppError('요청 실패 (' + status + ')', msg);
+}
+async function httpError(res) { return errorFor(res.status, await peekError(res)); }
 
 // 응답에서 JSON 블록만 뽑아낸다 (```json … ``` 또는 첫 { … 마지막 })
 function extractJSON(text) {
