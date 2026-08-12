@@ -8,6 +8,7 @@ const K_KEY = 'as-api-key';
 const K_MODEL = 'as-model';
 const K_NOEFFORT = 'as-no-effort';    // effort 를 거부한 모델 기록 — 다음부터 안 보냄
 const K_BASICTOOLS = 'as-basic-tools'; // 최신 웹검색 도구를 거부한 모델 기록
+const K_USAGE = 'as-usage';         // 실제 사용량 기록 [{at, kind, model, cost, in, out, searches}]
 const K_RECENT = 'as-recent';       // { search: [...], url: [...] }
 const K_CACHE = 'as-cache';         // { "s:키워드": {at, data}, "u:링크": {at, data} }
 const CACHE_TTL = 6 * 60 * 60 * 1000;   // 6시간 — 같은 검색을 다시 열 때 요금이 또 나가지 않게
@@ -50,6 +51,39 @@ function loadJSON(k, dflt) {
   try { return JSON.parse(localStorage.getItem(k) || '') ?? dflt; } catch (_) { return dflt; }
 }
 function saveJSON(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (_) {} }
+
+// ── 요금 (공식 단가, 100만 토큰당 USD) ────────
+// 캐시 읽기는 입력가의 0.1배, 캐시 쓰기는 1.25배. 웹검색은 1,000회당 $10.
+const MODEL_INFO = {
+  'claude-opus-5':    { label: 'Claude Opus 5',   note: '가장 똑똑함 · 가장 비쌈', in: 5, out: 25 },
+  'claude-sonnet-5':  { label: 'Claude Sonnet 5', note: '속도·품질·가격 균형 (추천)', in: 3, out: 15,
+                        introIn: 2, introOut: 10, introUntil: '2026-08-31' },
+  'claude-haiku-4-5': { label: 'Claude Haiku 4.5', note: '가장 저렴 · 분석 품질 낮음', in: 1, out: 5 },
+};
+const WEB_SEARCH_USD = 0.01;   // 검색 1회
+const KRW_PER_USD = 1400;      // 표시용 어림값 — 실제 환율과 다를 수 있음
+
+function rateOf(model) {
+  const m = MODEL_INFO[model] || MODEL_INFO['claude-opus-5'];
+  const onIntro = m.introUntil && new Date().toISOString().slice(0, 10) <= m.introUntil;
+  return { in: onIntro ? m.introIn : m.in, out: onIntro ? m.introOut : m.out, onIntro: !!onIntro };
+}
+function costOf(model, u) {
+  const r = rateOf(model);
+  return (u.in / 1e6) * r.in
+       + (u.cacheRead / 1e6) * r.in * 0.1
+       + (u.cacheWrite / 1e6) * r.in * 1.25
+       + (u.out / 1e6) * r.out
+       + (u.searches || 0) * WEB_SEARCH_USD;
+}
+const usd = n => '$' + (n < 0.01 ? n.toFixed(4) : n.toFixed(3));
+const krw = n => '약 ' + Math.round(n * KRW_PER_USD).toLocaleString('ko-KR') + '원';
+
+function logUsage(kind, model, u) {
+  const log = loadJSON(K_USAGE, []);
+  log.unshift({ at: Date.now(), kind, model, cost: costOf(model, u), in: u.in, out: u.out, searches: u.searches });
+  saveJSON(K_USAGE, log.slice(0, 100));
+}
 
 // ── 결과 캐시 ────────────────────────────────
 function cacheGet(key) {
@@ -96,6 +130,7 @@ async function callClaude({ system, userText, kind, maxContinuations = 4 }) {
   const model = getModel();
   let messages = [{ role: 'user', content: userText }];
   let out = [], searchLinks = [];
+  const usage = { in: 0, out: 0, cacheRead: 0, cacheWrite: 0, searches: 0 };
 
   for (let i = 0; i <= maxContinuations; i++) {
     let res;
@@ -117,6 +152,13 @@ async function callClaude({ system, userText, kind, maxContinuations = 4 }) {
     if (!res.ok) throw await httpError(res);
     const data = await res.json();
 
+    const u = data.usage || {};
+    usage.in += u.input_tokens || 0;
+    usage.out += u.output_tokens || 0;
+    usage.cacheRead += u.cache_read_input_tokens || 0;
+    usage.cacheWrite += u.cache_creation_input_tokens || 0;
+    usage.searches += (u.server_tool_use && u.server_tool_use.web_search_requests) || 0;
+
     for (const b of data.content || []) {
       if (b.type === 'text' && b.text) out.push(b.text);
       if (b.type === 'web_search_tool_result' && Array.isArray(b.content)) {
@@ -137,6 +179,7 @@ async function callClaude({ system, userText, kind, maxContinuations = 4 }) {
     }
     break;
   }
+  logUsage(kind, model, usage);
   return { text: out.join('\n'), searchLinks };
 }
 
@@ -356,6 +399,80 @@ async function runDigest() {
   finally { busy = false; $('digestForm').querySelector('.go').disabled = false; }
 }
 
+// ── 정보 탭 ──────────────────────────────────
+function kv(k, v) { return `<div class="kv"><span>${k}</span><b>${v}</b></div>`; }
+
+function renderInfo() {
+  const model = getModel();
+  const mi = MODEL_INFO[model] || { label: model, note: '' };
+  const r = rateOf(model);
+  const log = loadJSON(K_USAGE, []);
+  const pick = k => log.filter(e => e.kind === k);
+  const avg = a => a.length ? a.reduce((s, e) => s + e.cost, 0) / a.length : null;
+  const sAvg = avg(pick('search')), dAvg = avg(pick('digest'));
+  const total = log.reduce((s, e) => s + e.cost, 0);
+  const last = log[0];
+
+  // 실측이 없을 때 보여줄 대략치 — 웹검색 3~6회 + 입력 2만~5만 토큰 + 출력 1.5천~3천 토큰 가정
+  const estLo = costOf(model, { in: 20000, out: 1500, cacheRead: 0, cacheWrite: 0, searches: 3 });
+  const estHi = costOf(model, { in: 50000, out: 3000, cacheRead: 0, cacheWrite: 0, searches: 6 });
+
+  const measured = log.length ? `
+      ${last ? kv('가장 최근 1회', `${usd(last.cost)} <small>(${krw(last.cost)})</small>`) : ''}
+      ${sAvg != null ? kv('검색 및 분석 평균', `${usd(sAvg)} <small>(${krw(sAvg)})</small>`) : ''}
+      ${dAvg != null ? kv('기사요약 평균', `${usd(dAvg)} <small>(${krw(dAvg)})</small>`) : ''}
+      ${kv(`지금까지 ${log.length}회 누계`, `${usd(total)} <small>(${krw(total)})</small>`)}
+      <p class="tiny">이 기기에서 실제로 쓴 토큰·검색 횟수로 계산한 값이에요.
+        모델을 바꾸면 평균도 달라집니다.</p>`
+    : `
+      ${kv('예상 1회 비용', `${usd(estLo)} ~ ${usd(estHi)}`)}
+      <p class="tiny">아직 검색 기록이 없어 <b>대략치</b>예요. 한 번 검색하면 실제 사용량으로 다시 계산해 보여줍니다.</p>`;
+
+  $('infoBody').innerHTML = `
+    <section class="sec">
+      <h3>🤖 지금 쓰는 모델</h3>
+      <div class="model-now">${esc(mi.label || model)}</div>
+      <p class="tiny">${esc(mi.note || '')} · <code>${esc(model)}</code></p>
+      ${kv('입력 요금', `$${r.in} <small>/ 100만 토큰</small>`)}
+      ${kv('출력 요금', `$${r.out} <small>/ 100만 토큰</small>`)}
+      ${kv('웹검색 요금', `$${WEB_SEARCH_USD} <small>/ 검색 1회</small>`)}
+      ${r.onIntro ? `<p class="tiny">※ 지금은 출시 기념 할인가예요. ${esc(MODEL_INFO[model].introUntil)}까지.</p>` : ''}
+      <button class="ghost wide" id="infoModelBtn" type="button">⚙︎ 모델 바꾸기</button>
+    </section>
+
+    <section class="sec s-fact">
+      <h3>💰 1회 검색당 비용</h3>
+      ${measured}
+      <p class="tiny">환율은 1달러 ${KRW_PER_USD.toLocaleString('ko-KR')}원으로 어림잡은 값이라
+        실제 청구액과 차이가 납니다. 정확한 금액은
+        <a href="https://console.anthropic.com/settings/usage" target="_blank" rel="noopener noreferrer">콘솔 사용량 ↗</a>에서 보세요.</p>
+      <p class="tiny">같은 검색어·링크를 <b>6시간 안에</b> 다시 열면 저장해 둔 결과를 쓰므로 <b>0원</b>이에요.</p>
+    </section>
+
+    <section class="sec s-kid">
+      <h3>📖 사용방법</h3>
+      <ol class="bul howto">
+        <li><b>검색 및 분석</b> — 궁금한 낱말이나 사건을 넣고 검색을 누르면, 여러 언론사 기사를 찾아
+          <b>핵심 내용 · 언론사별 비교 · 공통 팩트 · 초등학생 눈높이 설명</b>으로 정리해 줘요.
+          30초~1분쯤 걸립니다.</li>
+        <li><b>기사요약</b> — 읽던 기사의 주소를 복사해 붙여넣고 요약을 누르면
+          <b>제목과 핵심 내용</b>을 간추리고 <b>관련 기사 링크</b>를 같이 보여줘요.</li>
+        <li>입력칸 아래 <b>최근 목록</b>을 누르면 지난 검색을 다시 볼 수 있어요.</li>
+        <li>결과의 <b>기사 보기 ↗</b> 를 누르면 원문으로 갑니다. 중요한 내용은 원문으로 확인하세요.</li>
+      </ol>
+      <h3 style="margin-top:14px">💡 알아두면 좋은 것</h3>
+      <ul class="bul">
+        <li>API 키는 <b>이 기기에만</b> 저장돼요. 다른 기기에서는 ⚙︎ 에서 한 번 더 넣어야 합니다.</li>
+        <li>비용을 아끼려면 ⚙︎ 에서 <b>Sonnet 5</b>를 쓰세요. Opus 5는 더 똑똑하지만 몇 배 비쌉니다.</li>
+        <li>검색으로 확인된 사실만 쓰도록 해 뒀지만, <b>AI가 틀릴 수 있어요.</b>
+          숫자나 중요한 내용은 원문 기사로 꼭 확인하세요.</li>
+        <li>기록을 지우려면 ⚙︎ → <b>저장된 결과 지우기</b>.</li>
+      </ul>
+    </section>`;
+
+  const mb = $('infoModelBtn'); if (mb) mb.onclick = openSheet;
+}
+
 // ── 탭 · 설정 ────────────────────────────────
 function bindTabs() {
   document.querySelectorAll('#viewtabs .vtab').forEach(btn => {
@@ -368,6 +485,9 @@ function bindTabs() {
       });
       $('view-search').classList.toggle('hidden', v !== 'search');
       $('view-digest').classList.toggle('hidden', v !== 'digest');
+      $('view-info').classList.toggle('hidden', v !== 'info');
+      if (v === 'info') renderInfo();          // 열 때마다 최신 사용량으로 다시 계산
+      window.scrollTo({ top: 0 });
     };
   });
 }
@@ -386,11 +506,14 @@ function bindSheet() {
     if (k) localStorage.setItem(K_KEY, k); else localStorage.removeItem(K_KEY);
     localStorage.setItem(K_MODEL, $('model').value);
     $('sheet').classList.add('hidden');
+    if (!$('view-info').classList.contains('hidden')) renderInfo();   // 모델이 바뀌었을 수 있다
   };
   $('clearCache').onclick = () => {
-    localStorage.removeItem(K_CACHE); localStorage.removeItem(K_RECENT);
+    if (!confirm('저장된 검색 결과 · 최근 목록 · 비용 기록을 모두 지울까요?\n(API 키와 모델 설정은 그대로예요)')) return;
+    [K_CACHE, K_RECENT, K_USAGE].forEach(k => localStorage.removeItem(k));
     renderRecent();
-    alert('저장된 검색 결과와 최근 목록을 지웠어요.');
+    if (!$('view-info').classList.contains('hidden')) renderInfo();
+    alert('지웠어요.');
   };
 }
 

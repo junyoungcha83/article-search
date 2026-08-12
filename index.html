@@ -4,10 +4,10 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>기사검색</title>
-<link rel="stylesheet" href="assets/app.css?v=3" />
+<link rel="stylesheet" href="assets/app.css?v=4" />
 
 <!-- PWA -->
-<link rel="manifest" href="manifest.webmanifest?v=3" />
+<link rel="manifest" href="manifest.webmanifest?v=4" />
 <meta name="theme-color" content="#0f172a" />
 <link rel="icon" type="image/png" sizes="192x192" href="assets/icon-192.png" />
 <link rel="icon" type="image/svg+xml" href="assets/icon.svg" />
@@ -29,6 +29,7 @@
 <nav class="viewtabs" id="viewtabs" role="tablist" aria-label="보기 전환">
   <button class="vtab active" data-view="search" role="tab" aria-selected="true">🔎 검색 및 분석</button>
   <button class="vtab" data-view="digest" role="tab" aria-selected="false">🔎 기사요약</button>
+  <button class="vtab" data-view="info" role="tab" aria-selected="false">ℹ️ 정보</button>
 </nav>
 
 <!-- ── 검색 및 분석 ───────────────────────────── -->
@@ -63,6 +64,11 @@
   </main>
 </div>
 
+<!-- ── 정보 ──────────────────────────────────── -->
+<div class="view hidden" id="view-info">
+  <main class="result" id="infoBody"></main>
+</div>
+
 <!-- ── 설정 시트 ─────────────────────────────── -->
 <div class="sheet hidden" id="sheet">
   <div class="sheet-box">
@@ -94,7 +100,7 @@
   </div>
 </div>
 
-<script src="assets/app.js?v=3"></script>
+<script src="assets/app.js?v=4"></script>
 <script>
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));

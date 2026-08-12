@@ -43,9 +43,9 @@ body {
   background: var(--bg); border-bottom: 1px solid var(--border);
 }
 .vtab {
-  flex: 1; padding: 9px 10px; border-radius: 999px; cursor: pointer;
+  flex: 1; padding: 9px 4px; border-radius: 999px; cursor: pointer;
   border: 1px solid var(--border); background: var(--card); color: var(--muted);
-  font-size: .9rem; font-weight: 700;
+  font-size: .82rem; font-weight: 700; white-space: nowrap;
 }
 .vtab.active { background: var(--header); border-color: var(--header); color: #fff; }
 
@@ -142,6 +142,25 @@ body {
 .src:first-child { border-top: 0; padding-top: 0 }
 .src .t { font-size: .92rem; font-weight: 700; color: var(--link) }
 .src .m { font-size: .76rem; color: var(--muted) }
+
+/* 정보 탭 */
+.model-now { font-size: 1.15rem; font-weight: 800; letter-spacing: -0.01em }
+.kv {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  padding: 7px 0; border-top: 1px dashed var(--border); font-size: .9rem;
+}
+.kv:first-of-type { border-top: 0 }
+.kv > span { color: var(--muted); flex: none }
+.kv > b { text-align: right; font-weight: 800 }
+.kv small { font-weight: 600; color: var(--muted); font-size: .78rem }
+.tiny { font-size: .78rem; color: var(--muted); margin: 8px 0 0; line-height: 1.6 }
+.tiny a { color: var(--link) }
+.tiny code {
+  font-size: .72rem; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 5px; padding: 1px 5px;
+}
+.ghost.wide { display: block; width: 100%; margin-top: 12px }
+.howto li { margin-bottom: 9px }
 
 .note { font-size: .8rem; color: var(--muted); padding: 2px 2px 10px }
 .meta { font-size: .78rem; color: var(--muted); margin: -4px 0 10px }
