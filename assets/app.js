@@ -94,6 +94,14 @@ function cacheEntry(key) {
 }
 const isStale = e => (Date.now() - e.at) > CACHE_TTL;
 
+// 저장본 꺼내기. v5 이하는 { data, links } 로, v6부터는 { result, links } 로 저장했다.
+// 예전 저장본도 읽히게 둘 다 받고, 모양이 이상하면 null 을 돌려 새로 검색하게 한다.
+function cachePayload(entry) {
+  const p = entry && entry.data;
+  const result = p && (p.result || p.data);
+  return (result && typeof result === 'object') ? { result, links: p.links || [] } : null;
+}
+
 function agoText(ts) {
   const m = Math.max(0, Math.round((Date.now() - ts) / 60000));
   if (m < 1) return '방금 전';
@@ -375,6 +383,7 @@ function sec(key, cls, title, inner) {
 }
 
 function renderSearch(box, d, fallbackLinks) {
+  d = d || {};
   const outlets = (d.outlets || []).filter(o => o && o.name);
   const facts = (d.common_facts || []).filter(Boolean);
   let sources = (d.sources || []).filter(s => s && s.url);
@@ -479,6 +488,7 @@ function bindReorder(list) {
 }
 
 function renderDigest(box, d) {
+  d = d || {};
   const summary = (d.summary || []).filter(Boolean);
   const related = (d.related || []).filter(r => r && r.url);
   const meta = [d.outlet, d.published].filter(Boolean).join(' · ');
@@ -498,7 +508,17 @@ function renderRaw(box, text) {   // JSON 파싱 실패 시 원문이라도 보�
 // ── 동작 ─────────────────────────────────────
 let busy = false;
 
-async function runSearch(opts = {}) {
+// 예외가 나도 조용히 죽지 않게 — 무슨 일이 났는지 화면에 띄운다
+function runSearch(opts) {
+  return Promise.resolve().then(() => searchFlow(opts || {}))
+    .catch(e => { console.error(e); showError($('searchResult'), e); });
+}
+function runDigest(opts) {
+  return Promise.resolve().then(() => digestFlow(opts || {}))
+    .catch(e => { console.error(e); showError($('digestResult'), e); });
+}
+
+async function searchFlow(opts) {
   const q = $('q').value.trim();
   const box = $('searchResult');
   if (!q || busy) return;
@@ -507,10 +527,11 @@ async function runSearch(opts = {}) {
   // 저장된 결과가 있으면 기본은 그것을 보여준다.
   // 6시간이 지났을 때만 새로 검색할지 물어보고, '예'를 눌렀을 때만 새로 찾는다.
   const entry = opts.force ? null : cacheEntry('s:' + q);
-  if (entry) {
+  const saved = cachePayload(entry);
+  if (saved) {
     const showSaved = !isStale(entry) || !(await askRefresh(q, entry.at, 'search'));
     if (showSaved) {
-      renderSearch(box, entry.data.result, entry.data.links);
+      renderSearch(box, saved.result, saved.links);
       markCached(box, entry.at, () => runSearch({ force: true }));
       recentAdd('search', q);
       return;
@@ -534,7 +555,7 @@ async function runSearch(opts = {}) {
   finally { busy = false; $('searchForm').querySelector('.go').disabled = false; }
 }
 
-async function runDigest(opts = {}) {
+async function digestFlow(opts) {
   const u = $('url').value.trim();
   const box = $('digestResult');
   if (!u || busy) return;
@@ -545,11 +566,12 @@ async function runDigest(opts = {}) {
   window.scrollTo({ top: 0, behavior: 'smooth' });
 
   const entry = opts.force ? null : cacheEntry('u:' + u);
-  if (entry) {
+  const saved = cachePayload(entry);
+  if (saved) {
     let label = u; try { label = new URL(u).hostname.replace(/^www\./, ''); } catch (_) {}
     const showSaved = !isStale(entry) || !(await askRefresh(label, entry.at, 'digest'));
     if (showSaved) {
-      renderDigest(box, entry.data.result);
+      renderDigest(box, saved.result);
       markCached(box, entry.at, () => runDigest({ force: true }));
       recentAdd('url', u);
       return;
