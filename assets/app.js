@@ -6,7 +6,8 @@
 const API_URL = 'https://api.anthropic.com/v1/messages';
 const K_KEY = 'as-api-key';
 const K_MODEL = 'as-model';
-const K_NOEFFORT = 'as-no-effort';  // effort 를 거부한 모델 기록 — 다음부터 안 보냄
+const K_NOEFFORT = 'as-no-effort';    // effort 를 거부한 모델 기록 — 다음부터 안 보냄
+const K_BASICTOOLS = 'as-basic-tools'; // 최신 웹검색 도구를 거부한 모델 기록
 const K_RECENT = 'as-recent';       // { search: [...], url: [...] }
 const K_CACHE = 'as-cache';         // { "s:키워드": {at, data}, "u:링크": {at, data} }
 const CACHE_TTL = 6 * 60 * 60 * 1000;   // 6시간 — 같은 검색을 다시 열 때 요금이 또 나가지 않게
@@ -26,6 +27,24 @@ const EFFORT_MODELS = { 'claude-opus-5': 1, 'claude-sonnet-5': 1 };
 const effortBlocked = m => (loadJSON(K_NOEFFORT, {})[m] === true);
 function blockEffort(m) { const o = loadJSON(K_NOEFFORT, {}); o[m] = true; saveJSON(K_NOEFFORT, o); }
 const useEffort = m => !!EFFORT_MODELS[m] && !effortBlocked(m);
+
+// 웹검색·웹읽기 도구도 최신판(_20260209)은 내부적으로 코드실행을 써서 상위 모델에서만 돈다.
+// Haiku 4.5 등에서는 기본판을 써야 한다. 400 이 오면 기록해 두고 기본판으로 내려간다.
+const MODERN_TOOL_MODELS = { 'claude-opus-5': 1, 'claude-sonnet-5': 1 };
+const useModernTools = m => !!MODERN_TOOL_MODELS[m] && loadJSON(K_BASICTOOLS, {})[m] !== true;
+function blockModernTools(m) { const o = loadJSON(K_BASICTOOLS, {}); o[m] = true; saveJSON(K_BASICTOOLS, o); }
+
+function toolsFor(kind, model) {
+  const modern = useModernTools(model);
+  const search = modern
+    ? { type: 'web_search_20260209', name: 'web_search', max_uses: 8 }
+    : { type: 'web_search_20250305', name: 'web_search', max_uses: 8 };
+  if (kind === 'search') return [search];
+  const fetchTool = modern
+    ? { type: 'web_fetch_20260209', name: 'web_fetch', max_uses: 4 }
+    : { type: 'web_fetch_20250910', name: 'web_fetch', max_uses: 4 };
+  return [fetchTool, { ...search, max_uses: 5 }];
+}
 
 function loadJSON(k, dflt) {
   try { return JSON.parse(localStorage.getItem(k) || '') ?? dflt; } catch (_) { return dflt; }
@@ -70,7 +89,7 @@ function renderRecent() {
 
 // ── Claude 호출 ──────────────────────────────
 // 서버측 도구(web_search/web_fetch)는 stop_reason:"pause_turn" 으로 끊길 수 있어 이어서 재요청한다.
-async function callClaude({ system, userText, tools, maxContinuations = 4 }) {
+async function callClaude({ system, userText, kind, maxContinuations = 4 }) {
   const key = getKey();
   if (!key) throw new AppError('API 키가 없어요', '오른쪽 위 ⚙︎ 에서 Anthropic API 키를 넣어 주세요.');
 
@@ -79,20 +98,21 @@ async function callClaude({ system, userText, tools, maxContinuations = 4 }) {
   let out = [], searchLinks = [];
 
   for (let i = 0; i <= maxContinuations; i++) {
-    const body = { model, max_tokens: 16000, system, tools, messages };
-    if (useEffort(model)) body.output_config = { effort: 'medium' };
+    let res;
+    // 모델이 지원하지 않는 옵션이 있으면 400 이 온다. 그 옵션을 한 단계씩 내려가며 다시 보낸다.
+    for (let attempt = 0; ; attempt++) {
+      const body = { model, max_tokens: 16000, system, tools: toolsFor(kind, model), messages };
+      if (useEffort(model)) body.output_config = { effort: 'medium' };
 
-    let res = await postJSON(key, body);
-    // 이 모델이 effort 를 거부하면 기록해 두고 즉시 다시 보낸다(사용자에겐 그냥 성공한 것처럼 보임)
-    if (res.status === 400 && body.output_config) {
+      res = await postJSON(key, body);
+      if (res.status !== 400 || attempt >= 2) break;
+
       const msg = await peekError(res);
-      if (/effort/i.test(msg)) {
-        blockEffort(model);
-        delete body.output_config;
-        res = await postJSON(key, body);
-      } else {
-        throw errorFor(400, msg);
+      if (/effort/i.test(msg) && body.output_config) { blockEffort(model); continue; }
+      if (/programmatic tool calling|allowed_callers/i.test(msg) && useModernTools(model)) {
+        blockModernTools(model); continue;
       }
+      throw errorFor(400, msg);
     }
     if (!res.ok) throw await httpError(res);
     const data = await res.json();
@@ -144,6 +164,10 @@ function errorFor(status, msg) {
   if (status === 404) return new AppError('모델을 찾을 수 없어요', '⚙︎ 설정에서 다른 모델을 골라 보세요. ' + msg);
   if (status === 429) return new AppError('요청이 너무 많아요', '잠시 뒤에 다시 시도해 주세요.');
   if (status >= 500) return new AppError('서버가 바빠요', '잠시 뒤에 다시 시도해 주세요. (' + status + ')');
+  if (status === 400 && /does not support|not supported/i.test(msg)) {
+    return new AppError('이 모델로는 안 되는 기능이에요',
+      '⚙︎ 설정에서 Sonnet 5 나 Opus 5 로 바꾸면 됩니다. (' + msg + ')');
+  }
   return new AppError('요청 실패 (' + status + ')', msg);
 }
 async function httpError(res) { return errorFor(res.status, await peekError(res)); }
@@ -202,11 +226,6 @@ const DIGEST_SYSTEM = `${RULES}
 - related 는 web_search 로 찾은 같은 사건·주제의 다른 기사 3~5개(가능하면 다른 언론사).
 - 본문을 못 읽으면 title 에 알아낸 만큼만 쓰고 note 에 이유를 적는다.`;
 
-const TOOLS_SEARCH = [{ type: 'web_search_20260209', name: 'web_search', max_uses: 8 }];
-const TOOLS_DIGEST = [
-  { type: 'web_fetch_20260209', name: 'web_fetch', max_uses: 4 },
-  { type: 'web_search_20260209', name: 'web_search', max_uses: 5 },
-];
 
 // ── 로딩 표시 ────────────────────────────────
 let _timer = null;
@@ -296,7 +315,7 @@ async function runSearch() {
     const { text, searchLinks } = await callClaude({
       system: SEARCH_SYSTEM,
       userText: `검색어: ${q}\n\n이 주제의 최근 기사를 여러 언론사에서 찾아 스키마대로 정리해 줘.`,
-      tools: TOOLS_SEARCH,
+      kind: 'search',
     });
     stopLoading();
     const d = extractJSON(text);
@@ -326,7 +345,7 @@ async function runDigest() {
     const { text } = await callClaude({
       system: DIGEST_SYSTEM,
       userText: `기사 링크: ${u}\n\n이 기사를 읽고 스키마대로 요약해 줘. 관련 기사도 찾아 줘.`,
-      tools: TOOLS_DIGEST,
+      kind: 'digest',
     });
     stopLoading();
     const d = extractJSON(text);

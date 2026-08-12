@@ -4,10 +4,10 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>기사검색</title>
-<link rel="stylesheet" href="assets/app.css?v=2" />
+<link rel="stylesheet" href="assets/app.css?v=3" />
 
 <!-- PWA -->
-<link rel="manifest" href="manifest.webmanifest?v=2" />
+<link rel="manifest" href="manifest.webmanifest?v=3" />
 <meta name="theme-color" content="#0f172a" />
 <link rel="icon" type="image/png" sizes="192x192" href="assets/icon-192.png" />
 <link rel="icon" type="image/svg+xml" href="assets/icon.svg" />
@@ -79,10 +79,11 @@
       <span>모델</span>
       <select class="tf" id="model">
         <option value="claude-opus-5">Claude Opus 5 — 가장 똑똑함 (기본)</option>
-        <option value="claude-sonnet-5">Claude Sonnet 5 — 빠르고 저렴</option>
-        <option value="claude-haiku-4-5">Claude Haiku 4.5 — 가장 저렴</option>
+        <option value="claude-sonnet-5">Claude Sonnet 5 — 빠르고 저렴 (추천)</option>
+        <option value="claude-haiku-4-5">Claude Haiku 4.5 — 가장 저렴 (분석 품질 낮음)</option>
       </select>
-      <small>검색 1회에 웹검색 비용($0.01)과 토큰 비용이 듭니다. 자주 쓰면 Sonnet을 권해요.</small>
+      <small>검색 1회에 웹검색 비용($0.01)과 토큰 비용이 듭니다. 평소엔 <b>Sonnet 5</b>가 무난해요.
+        Haiku 4.5는 검색 기능이 제한적이고 언론사별 비교·쉬운 설명의 품질이 떨어집니다.</small>
     </label>
 
     <div class="sheet-btns">
@@ -93,7 +94,7 @@
   </div>
 </div>
 
-<script src="assets/app.js?v=2"></script>
+<script src="assets/app.js?v=3"></script>
 <script>
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
