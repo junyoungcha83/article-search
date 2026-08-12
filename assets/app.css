@@ -160,6 +160,29 @@ body {
 .src .t { font-size: .92rem; font-weight: 700; color: var(--link) }
 .src .m { font-size: .76rem; color: var(--muted) }
 
+/* 저장된 결과 안내줄 */
+.cached-bar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  background: #eef2ff; border: 1px solid #c7d2fe; color: #3730a3;
+  border-radius: 12px; padding: 9px 12px; margin-bottom: 10px; font-size: .82rem;
+}
+.cached-bar.old { background: #fff7ed; border-color: #fed7aa; color: #9a3412 }
+.cached-bar > span { flex: 1; min-width: 0 }
+.mini {
+  flex: none; border: 1px solid currentColor; background: transparent; color: inherit;
+  border-radius: 999px; padding: 4px 12px; font-size: .78rem; font-weight: 800;
+  font-family: inherit; cursor: pointer;
+}
+.mini:active { transform: scale(.96) }
+
+/* 물어보기 팝업 */
+.ask-box { max-width: 460px }
+.ask-title { font-size: 1.05rem; margin: 0 0 10px }
+.ask-line { margin: 0 0 7px; font-size: .9rem; color: var(--text) }
+.ask-line:last-of-type { color: var(--muted); font-size: .84rem }
+.ask-btns { margin-top: 16px; flex-direction: column }
+.ask-btns .go, .ask-btns .ghost { width: 100%; padding: 13px }
+
 /* 정보 탭 */
 .model-now { font-size: 1.15rem; font-weight: 800; letter-spacing: -0.01em }
 .kv {

@@ -87,10 +87,24 @@ function logUsage(kind, model, u) {
 }
 
 // ── 결과 캐시 ────────────────────────────────
-function cacheGet(key) {
+// 오래됐다고 버리지 않는다. 6시간이 지나면 '새로 검색할까요?' 로 물어보고 사용자가 고른다.
+function cacheEntry(key) {
   const c = loadJSON(K_CACHE, {})[key];
-  if (!c || (Date.now() - c.at) > CACHE_TTL) return null;
-  return c.data;
+  return (c && c.data) ? c : null;
+}
+const isStale = e => (Date.now() - e.at) > CACHE_TTL;
+
+function agoText(ts) {
+  const m = Math.max(0, Math.round((Date.now() - ts) / 60000));
+  if (m < 1) return '방금 전';
+  if (m < 60) return m + '분 전';
+  const h = Math.round(m / 60);
+  if (h < 24) return h + '시간 전';
+  return Math.round(h / 24) + '일 전';
+}
+function whenText(ts) {
+  const d = new Date(ts), p = n => String(n).padStart(2, '0');
+  return `${d.getMonth() + 1}월 ${d.getDate()}일 ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 function cachePut(key, data) {
   const c = loadJSON(K_CACHE, {});
@@ -271,6 +285,53 @@ const DIGEST_SYSTEM = `${RULES}
 - 본문을 못 읽으면 title 에 알아낸 만큼만 쓰고 note 에 이유를 적는다.`;
 
 
+// ── 물어보기 팝업 ────────────────────────────
+function askDialog({ icon, title, lines, yes, no }) {
+  return new Promise(resolve => {
+    const ov = document.createElement('div');
+    ov.className = 'sheet';
+    ov.innerHTML = `<div class="sheet-box ask-box">
+      <h2 class="ask-title">${icon} ${esc(title)}</h2>
+      ${lines.map(l => `<p class="ask-line">${l}</p>`).join('')}
+      <div class="sheet-btns ask-btns">
+        <button class="go" type="button" data-a="1">${esc(yes)}</button>
+        <button class="ghost" type="button" data-a="0">${esc(no)}</button>
+      </div></div>`;
+    document.body.appendChild(ov);
+    const done = v => { ov.remove(); resolve(v); };
+    ov.querySelector('[data-a="1"]').onclick = () => done(true);
+    ov.querySelector('[data-a="0"]').onclick = () => done(false);
+    ov.onclick = e => { if (e.target === ov) done(false); };   // 바깥을 누르면 '아니요'
+  });
+}
+
+// 저장된 결과가 6시간을 넘었을 때만 물어본다. true = 새로 검색
+function askRefresh(label, at, kind) {
+  const log = loadJSON(K_USAGE, []).filter(e => e.kind === kind);
+  const avg = log.length ? log.reduce((s, e) => s + e.cost, 0) / log.length : null;
+  return askDialog({
+    icon: '🕓', title: '새로 검색할까요?',
+    lines: [
+      `<b>${esc(label)}</b>`,
+      `저장된 결과는 <b>${whenText(at)}</b>에 찾은 거예요 (${agoText(at)}).`,
+      avg != null
+        ? `새로 검색하면 최신 기사를 찾지만 요금이 들어요 — 평균 ${usd(avg)} (${krw(avg)}).`
+        : '새로 검색하면 최신 기사를 찾지만 요금이 들어요.',
+    ],
+    yes: '예, 새로 검색', no: '아니요, 저장된 결과 보기',
+  });
+}
+
+// 저장된 결과를 보여줄 때 맨 위에 붙는 안내줄 (여기서도 바로 새로 검색 가능)
+function markCached(box, at, onRefresh) {
+  const bar = document.createElement('div');
+  bar.className = 'cached-bar' + ((Date.now() - at) > CACHE_TTL ? ' old' : '');
+  bar.innerHTML = `<span>🕓 ${esc(whenText(at))}에 검색한 결과예요 (${agoText(at)})</span>
+    <button class="mini" type="button">새로 검색</button>`;
+  bar.querySelector('.mini').onclick = onRefresh;
+  box.insertBefore(bar, box.firstChild);
+}
+
 // ── 로딩 표시 ────────────────────────────────
 let _timer = null;
 function showLoading(box, label) {
@@ -437,14 +498,24 @@ function renderRaw(box, text) {   // JSON 파싱 실패 시 원문이라도 보�
 // ── 동작 ─────────────────────────────────────
 let busy = false;
 
-async function runSearch() {
+async function runSearch(opts = {}) {
   const q = $('q').value.trim();
   const box = $('searchResult');
   if (!q || busy) return;
   window.scrollTo({ top: 0, behavior: 'smooth' });
 
-  const cached = cacheGet('s:' + q);
-  if (cached) { renderSearch(box, cached.data, cached.links); recentAdd('search', q); return; }
+  // 저장된 결과가 있으면 기본은 그것을 보여준다.
+  // 6시간이 지났을 때만 새로 검색할지 물어보고, '예'를 눌렀을 때만 새로 찾는다.
+  const entry = opts.force ? null : cacheEntry('s:' + q);
+  if (entry) {
+    const showSaved = !isStale(entry) || !(await askRefresh(q, entry.at, 'search'));
+    if (showSaved) {
+      renderSearch(box, entry.data.result, entry.data.links);
+      markCached(box, entry.at, () => runSearch({ force: true }));
+      recentAdd('search', q);
+      return;
+    }
+  }
 
   busy = true; $('searchForm').querySelector('.go').disabled = true;
   showLoading(box, `"${q}" 기사를 찾는 중…`);
@@ -456,14 +527,14 @@ async function runSearch() {
     });
     stopLoading();
     const d = extractJSON(text);
-    if (d) { renderSearch(box, d, searchLinks); cachePut('s:' + q, { data: d, links: searchLinks }); }
+    if (d) { renderSearch(box, d, searchLinks); cachePut('s:' + q, { result: d, links: searchLinks }); }
     else renderRaw(box, text);
     recentAdd('search', q);
   } catch (e) { showError(box, e); }
   finally { busy = false; $('searchForm').querySelector('.go').disabled = false; }
 }
 
-async function runDigest() {
+async function runDigest(opts = {}) {
   const u = $('url').value.trim();
   const box = $('digestResult');
   if (!u || busy) return;
@@ -473,8 +544,17 @@ async function runDigest() {
   }
   window.scrollTo({ top: 0, behavior: 'smooth' });
 
-  const cached = cacheGet('u:' + u);
-  if (cached) { renderDigest(box, cached.data); recentAdd('url', u); return; }
+  const entry = opts.force ? null : cacheEntry('u:' + u);
+  if (entry) {
+    let label = u; try { label = new URL(u).hostname.replace(/^www\./, ''); } catch (_) {}
+    const showSaved = !isStale(entry) || !(await askRefresh(label, entry.at, 'digest'));
+    if (showSaved) {
+      renderDigest(box, entry.data.result);
+      markCached(box, entry.at, () => runDigest({ force: true }));
+      recentAdd('url', u);
+      return;
+    }
+  }
 
   busy = true; $('digestForm').querySelector('.go').disabled = true;
   showLoading(box, '기사를 읽는 중…');
@@ -486,7 +566,7 @@ async function runDigest() {
     });
     stopLoading();
     const d = extractJSON(text);
-    if (d) { renderDigest(box, d); cachePut('u:' + u, { data: d }); }
+    if (d) { renderDigest(box, d); cachePut('u:' + u, { result: d }); }
     else renderRaw(box, text);
     recentAdd('url', u);
   } catch (e) { showError(box, e); }
@@ -540,7 +620,8 @@ function renderInfo() {
       <p class="tiny">환율은 1달러 ${KRW_PER_USD.toLocaleString('ko-KR')}원으로 어림잡은 값이라
         실제 청구액과 차이가 납니다. 정확한 금액은
         <a href="https://console.anthropic.com/settings/usage" target="_blank" rel="noopener noreferrer">콘솔 사용량 ↗</a>에서 보세요.</p>
-      <p class="tiny">같은 검색어·링크를 <b>6시간 안에</b> 다시 열면 저장해 둔 결과를 쓰므로 <b>0원</b>이에요.</p>
+      <p class="tiny">한 번 찾은 검색어·링크는 저장돼요. 다시 열면 <b>저장된 결과를 먼저 보여주니 0원</b>이고,
+        6시간이 지났으면 새로 검색할지 물어봅니다. <b>예</b>를 눌렀을 때만 요금이 들어요.</p>
     </section>
 
     <section class="sec s-kid">
@@ -553,7 +634,9 @@ function renderInfo() {
           <b>제목과 핵심 내용</b>을 간추리고 <b>관련 기사 링크</b>를 같이 보여줘요.</li>
         <li>검색 결과의 <b>카드 제목줄(⋮⋮)을 손가락으로 끌면</b> 순서를 바꿀 수 있어요.
           바꾼 순서는 다음 검색에도 그대로 이어집니다. 카드 본문은 평소처럼 스크롤돼요.</li>
-        <li>입력칸 아래 <b>최근 목록</b>을 누르면 지난 검색을 다시 볼 수 있어요.</li>
+        <li>입력칸 아래 <b>최근 목록</b>을 누르면 저장해 둔 결과를 <b>요금 없이</b> 다시 봅니다.
+          6시간이 지난 결과라면 <b>“새로 검색할까요?”</b>를 물어보고, <b>예</b>를 눌렀을 때만 새로 찾아요.
+          결과 위 <b>새로 검색</b> 버튼으로도 언제든 새로 찾을 수 있어요.</li>
         <li>결과의 <b>기사 보기 ↗</b> 를 누르면 원문으로 갑니다. 중요한 내용은 원문으로 확인하세요.</li>
       </ol>
       <button class="ghost wide" id="infoOrderBtn" type="button">↕︎ 카드 순서 처음으로 되돌리기</button>

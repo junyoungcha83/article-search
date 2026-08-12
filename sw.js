@@ -1,6 +1,6 @@
 // 앱 셸 오프라인 캐시. 캐시 이름을 바꾸면 옛 캐시는 자동 폐기된다.
 // API 호출(api.anthropic.com)은 절대 가로채지 않는다 — 항상 네트워크로 직행.
-const CACHE = 'article-search-v5';
+const CACHE = 'article-search-v6';
 const CORE = [
   './', './index.html', './assets/app.css', './assets/app.js',
   './manifest.webmanifest', './assets/icon.svg', './assets/icon-192.png', './assets/icon-512.png', './assets/apple-touch-icon.png',
