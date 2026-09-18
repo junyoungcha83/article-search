@@ -4,10 +4,10 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>기사검색</title>
-<link rel="stylesheet" href="assets/app.css?v=7" />
+<link rel="stylesheet" href="assets/app.css?v=8" />
 
 <!-- PWA -->
-<link rel="manifest" href="manifest.webmanifest?v=7" />
+<link rel="manifest" href="manifest.webmanifest?v=8" />
 <meta name="theme-color" content="#0f172a" />
 <link rel="icon" type="image/png" sizes="192x192" href="assets/icon-192.png" />
 <link rel="icon" type="image/svg+xml" href="assets/icon.svg" />
@@ -23,6 +23,8 @@
 
 <header class="app-header">
   <h1>기사검색</h1>
+  <span class="sync-status" id="asSync"></span>
+  <button class="hdr-btn" id="syncBtn" type="button" title="결과 동기화 잠금/해제" aria-label="동기화">🔒</button>
   <button class="hdr-btn" id="settingsBtn" type="button" aria-label="설정">⚙︎</button>
 </header>
 
@@ -100,7 +102,7 @@
   </div>
 </div>
 
-<script src="assets/app.js?v=7"></script>
+<script src="assets/app.js?v=8"></script>
 <script>
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));

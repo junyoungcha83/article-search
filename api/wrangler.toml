@@ -1,0 +1,6 @@
+name = "article-search-api"
+main = "src/index.js"
+compatibility_date = "2025-05-01"
+[[kv_namespaces]]
+binding = "CACHE"
+id = "b8d79998808b476ba6663fbba6141324"

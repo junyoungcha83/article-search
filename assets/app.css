@@ -34,7 +34,12 @@ body {
 .hdr-btn {
   background: rgba(255,255,255,.12); border: 0; color: #fff;
   width: 34px; height: 34px; border-radius: 10px; font-size: 1rem; cursor: pointer;
+  flex: 0 0 auto;
 }
+
+/* 동기화 상태 — 헤더에서 제목과 버튼 사이에 작게 들어간다 */
+.sync-status { font-size: .72rem; font-weight: 700; opacity: .9; white-space: nowrap; }
+.sync-status.saving { color: #fde68a; } .sync-status.saved { color: #bbf7d0; } .sync-status.error { color: #fecaca; }
 
 /* 탭 */
 .viewtabs {

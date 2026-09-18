@@ -1,0 +1,1 @@
+{ "name": "article-search-api", "private": true, "scripts": { "deploy": "wrangler deploy" }, "devDependencies": { "wrangler": "^4" } }

@@ -121,6 +121,79 @@ function cachePut(key, data) {
   const keys = Object.keys(c).sort((a, b) => c[b].at - c[a].at).slice(30);
   keys.forEach(k => delete c[k]);
   saveJSON(K_CACHE, c);
+  asSchedulePush();
+}
+
+// ── 결과 동기화(여러 기기) — Cloudflare Worker + KV, 비밀번호 보호 ──
+// blog-writer 와 같은 패턴이다. 다만 저장 단위가 배열이 아니라 키 있는 객체라서,
+// 주고받을 때만 [{key, at, data}] 배열로 폈다가 다시 객체로 접는다.
+const AS_API = 'https://article-search-api.junyoung-cha83.workers.dev';
+const K_SYNC_TOKEN = 'as-sync-token';
+let _asSyncTimer = null;
+const asToken = () => { try { return localStorage.getItem(K_SYNC_TOKEN) || ''; } catch (_) { return ''; } };
+const cacheToItems = c => Object.keys(c).map(k => ({ key: k, at: c[k].at, data: c[k].data }))
+  .filter(i => Number.isFinite(i.at) && i.data && i.data.result);
+function asSyncStatus(s) {
+  const el = $('asSync'); if (!el) return;
+  const m = { saving: '동기화중…', saved: '동기화됨 ✓', error: '오프라인', readonly: '로컬', '': '' };
+  el.textContent = m[s] ?? ''; el.className = 'sync-status ' + (s || '');
+}
+function updateSyncUI() {
+  const b = $('syncBtn'); if (!b) return; const on = !!asToken();
+  b.textContent = on ? '🔓' : '🔒';
+  b.title = on ? '결과 동기화 켜짐 (탭하여 잠금)' : '결과 동기화 잠금 — 탭하여 비밀번호 입력';
+}
+async function asFetch() {
+  const t = asToken(); if (!t) return null;
+  try {
+    const r = await fetch(AS_API + '/api/data', { headers: { 'X-Edit-Token': t }, cache: 'no-store' });
+    if (r.status === 401) { try { localStorage.removeItem(K_SYNC_TOKEN); } catch (_) {} updateSyncUI(); return '401'; }
+    if (r.ok) { const j = await r.json(); return Array.isArray(j.items) ? j.items : []; }
+  } catch (_) {}
+  return null;
+}
+function asSchedulePush() { if (!asToken()) return; clearTimeout(_asSyncTimer); _asSyncTimer = setTimeout(asPush, 1000); }
+async function asPush() {
+  const t = asToken(); if (!t) return; asSyncStatus('saving');
+  try {
+    const r = await fetch(AS_API + '/api/data', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Edit-Token': t },
+      body: JSON.stringify({ items: cacheToItems(loadJSON(K_CACHE, {})) }),
+    });
+    if (r.status === 401) { try { localStorage.removeItem(K_SYNC_TOKEN); } catch (_) {} updateSyncUI(); asSyncStatus('error'); alert('동기화 비밀번호가 올바르지 않습니다.'); }
+    else if (r.ok) asSyncStatus('saved'); else asSyncStatus('error');
+  } catch (_) { asSyncStatus('error'); }
+}
+function promptAsToken() {
+  const cur = asToken();
+  const v = prompt(cur ? '결과 동기화 비밀번호 (지우고 확인 시 잠금)' : '결과 동기화 비밀번호를 입력하세요 (다른 기기와 공유)', cur);
+  if (v === null) return;
+  try { if (v.trim()) localStorage.setItem(K_SYNC_TOKEN, v.trim()); else localStorage.removeItem(K_SYNC_TOKEN); } catch (_) {}
+  updateSyncUI();
+  if (asToken()) asSyncInit(); else asSyncStatus('readonly');
+}
+// 시작·잠금해제 시: 서버와 로컬을 키 기준으로 병합(최신 at 우선) → 어느 기기 결과도 잃지 않는다
+async function asSyncInit() {
+  if (!asToken()) { asSyncStatus('readonly'); return; }
+  asSyncStatus('saving');
+  const remote = await asFetch();
+  if (remote === '401') { asSyncStatus('error'); return; }
+  if (remote) {
+    const local = loadJSON(K_CACHE, {});
+    const merged = {};
+    remote.forEach(i => { merged[i.key] = { at: i.at, data: i.data }; });
+    Object.keys(local).forEach(k => {
+      const e = merged[k];
+      if (!e || Number(local[k].at) > Number(e.at)) merged[k] = local[k];
+    });
+    // 앱과 같은 규칙으로 30건만 남긴다
+    Object.keys(merged).sort((a, b) => merged[b].at - merged[a].at).slice(30).forEach(k => delete merged[k]);
+    saveJSON(K_CACHE, merged);
+    renderRecent();
+    if (Object.keys(merged).length !== remote.length) asPush(); else asSyncStatus('saved');
+  } else {
+    if (Object.keys(loadJSON(K_CACHE, {})).length) asPush(); else asSyncStatus('saved');
+  }
 }
 
 // ── 최근 목록 ────────────────────────────────
@@ -717,8 +790,11 @@ function bindSheet() {
     if (!$('view-info').classList.contains('hidden')) renderInfo();   // 모델이 바뀌었을 수 있다
   };
   $('clearCache').onclick = () => {
-    if (!confirm('저장된 검색 결과 · 최근 목록 · 비용 기록을 모두 지울까요?\n(API 키와 모델 설정은 그대로예요)')) return;
+    const synced = !!asToken();
+    if (!confirm('저장된 검색 결과 · 최근 목록 · 비용 기록을 모두 지울까요?\n(API 키와 모델 설정은 그대로예요)'
+      + (synced ? '\n\n동기화가 켜져 있어서 다른 기기의 결과도 함께 지워집니다.' : ''))) return;
     [K_CACHE, K_RECENT, K_USAGE].forEach(k => localStorage.removeItem(k));
+    if (synced) asPush();   // 지운 상태를 서버에도 반영
     renderRecent();
     if (!$('view-info').classList.contains('hidden')) renderInfo();
     alert('지웠어요.');
@@ -731,5 +807,8 @@ document.addEventListener('DOMContentLoaded', () => {
   renderRecent();
   $('searchForm').onsubmit = e => { e.preventDefault(); runSearch(); };
   $('digestForm').onsubmit = e => { e.preventDefault(); runDigest(); };
+  updateSyncUI();
+  $('syncBtn').onclick = promptAsToken;
+  asSyncInit();
   if (!getKey()) openSheet();     // 첫 실행 — 키부터 받는다
 });

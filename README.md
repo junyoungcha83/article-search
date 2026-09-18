@@ -17,11 +17,24 @@
 | 파일 | 역할 |
 |---|---|
 | `index.html` | 화면 뼈대(탭 2개 + 설정 시트) |
-| `assets/app.js` | Claude API 호출, 프롬프트, 결과 렌더링, 캐시 |
+| `assets/app.js` | Claude API 호출, 프롬프트, 결과 렌더링, 캐시, 기기 간 동기화 |
 | `assets/app.css` | 스타일 (브리핑앱과 같은 팔레트) |
 | `sw.js` | 앱 셸 오프라인 캐시 — API 호출은 가로채지 않음 |
+| `api/` | 결과 동기화 Worker (Cloudflare Workers + KV). 정적 배포와는 별개로 `wrangler deploy` |
 
-정적 파일뿐이라 GitHub Pages에 그대로 올라간다. 빌드 단계 없음.
+UI는 정적 파일뿐이라 GitHub Pages에 그대로 올라간다. 빌드 단계 없음.
+
+## 기기 간 동기화
+
+헤더의 🔒 버튼에 비밀번호를 넣으면 검색 결과가 여러 기기에서 공유된다.
+
+- 저장소: Cloudflare Worker + KV 단일 키 `as-cache` (`api/src/index.js`)
+- 앱은 `as-cache` 를 객체로 들고 있다가 보낼 때만 `[{key, at, data}]` 배열로 편다
+- 시작·잠금해제 시 서버와 로컬을 **key 기준으로 병합**(최신 `at` 우선)하므로 어느 기기 결과도 잃지 않는다
+- 비밀번호는 `as-sync-token` 에 저장된다. **blog-writer 와는 별개의 비밀번호다**
+- 설정의 *저장된 결과 지우기* 는 동기화가 켜져 있으면 **다른 기기 결과도 함께 지운다**(확인창에 표시됨)
+
+맥북에서 `article-search` 스킬(Claude Code)로 만든 결과도 이 경로로 들어온다 — 그쪽은 요금이 들지 않는다.
 
 ## 동작 방식
 
