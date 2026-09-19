@@ -213,6 +213,7 @@ async function asSyncInit() {
     // 앱과 같은 규칙으로 30건만 남긴다
     Object.keys(merged).sort((a, b) => merged[b].at - merged[a].at).slice(30).forEach(k => delete merged[k]);
     saveJSON(K_CACHE, merged);
+    recentSyncFromCache(merged);
     renderRecent();
     if (Object.keys(merged).length !== remote.length) asPush(); else asSyncStatus('saved');
   } else {
@@ -221,6 +222,28 @@ async function asSyncInit() {
 }
 
 // ── 최근 목록 ────────────────────────────────
+// 동기화로 들어온 결과는 로컬 최근 목록에 없다 — 캐시 키에서 칩을 채운다.
+// 이게 없으면 다른 기기나 스킬이 넣은 결과를 열 길이 없다(키워드를 정확히 기억해 쳐야 한다).
+function recentSyncFromCache(cache) {
+  const r = loadJSON(K_RECENT, { search: [], url: [] });
+  let changed = false;
+  [['search', 's:'], ['url', 'u:']].forEach(([kind, pre]) => {
+    const list = r[kind] || [];
+    const at = {};
+    Object.keys(cache).filter(k => k.startsWith(pre))
+      .forEach(k => { at[k.slice(2)] = Number(cache[k].at) || 0; });
+    const add = Object.keys(at).filter(v => !list.includes(v));
+    if (!add.length) return;
+    changed = true;
+    // 캐시에 있는 것은 최신순으로, 캐시에서 밀려난 기존 칩은 뒤에 그대로 둔다
+    const all = [...list, ...add];
+    r[kind] = all.filter(v => at[v]).sort((a, b) => at[b] - at[a])
+      .concat(all.filter(v => !at[v])).slice(0, MAX_RECENT);
+  });
+  if (changed) saveJSON(K_RECENT, r);
+  return changed;
+}
+
 function recentAdd(kind, value) {
   const r = loadJSON(K_RECENT, { search: [], url: [] });
   const list = (r[kind] || []).filter(v => v !== value);
