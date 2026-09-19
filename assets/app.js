@@ -12,6 +12,7 @@ const K_USAGE = 'as-usage';         // 실제 사용량 기록 [{at, kind, model
 const K_ORDER = 'as-sec-order';     // 검색 결과 카드 순서 (드래그로 바꾼 값)
 const K_RECENT = 'as-recent';       // { search: [...], url: [...] }
 const K_CACHE = 'as-cache';         // { "s:키워드": {at, data}, "u:링크": {at, data} }
+const K_BUDGET = 'as-budget';       // 이번 달 비용 한도 (USD). 비어 있으면 확인하지 않는다
 const CACHE_TTL = 6 * 60 * 60 * 1000;   // 6시간 — 같은 검색을 다시 열 때 요금이 또 나가지 않게
 const MAX_RECENT = 8;
 
@@ -84,6 +85,29 @@ function logUsage(kind, model, u) {
   const log = loadJSON(K_USAGE, []);
   log.unshift({ at: Date.now(), kind, model, cost: costOf(model, u), in: u.in, out: u.out, searches: u.searches });
   saveJSON(K_USAGE, log.slice(0, 100));
+}
+
+// ── 비용 한도 ────────────────────────────────
+// blog-writer 와 같은 방식이다. 실수로 눌러서 요금이 나가는 것을 막는 장치라,
+// 막지는 않고 '넘었다'고 알려 준 뒤 고르게 한다. 비워 두면 확인하지 않는다.
+const budget = () => parseFloat(localStorage.getItem(K_BUDGET) || '') || 0;
+// 이번 달(현지 기준) 1일 0시
+const monthFrom = () => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), 1).getTime(); };
+const monthLog = () => loadJSON(K_USAGE, []).filter(e => e.at >= monthFrom());
+const monthCost = () => monthLog().reduce((s, e) => s + e.cost, 0);
+
+// 한도를 넘었으면 물어본다. true = 계속 진행
+async function checkBudget() {
+  const lim = budget();
+  if (lim <= 0) return true;
+  const used = monthCost();
+  if (used < lim) return true;
+  return askDialog({
+    icon: '💰', title: '이번 달 한도를 넘었어요',
+    lines: [`이번 달 누적 <b>${usd(used)}</b> (${krw(used)}) — 한도 ${usd(lim)}`,
+            '계속하면 요금이 더 나갑니다. 한도는 ⚙︎ 설정에서 바꿀 수 있어요.'],
+    yes: '알아요, 계속', no: '그만두기',
+  });
 }
 
 // ── 결과 캐시 ────────────────────────────────
@@ -611,6 +635,9 @@ async function searchFlow(opts) {
     }
   }
 
+  // 저장본을 보여주는 길에서는 묻지 않는다 — 요금이 나가는 건 여기서부터다
+  if (!await checkBudget()) return;
+
   busy = true; $('searchForm').querySelector('.go').disabled = true;
   showLoading(box, `"${q}" 기사를 찾는 중…`);
   try {
@@ -651,6 +678,8 @@ async function digestFlow(opts) {
     }
   }
 
+  if (!await checkBudget()) return;
+
   busy = true; $('digestForm').querySelector('.go').disabled = true;
   showLoading(box, '기사를 읽는 중…');
   try {
@@ -670,6 +699,16 @@ async function digestFlow(opts) {
 
 // ── 정보 탭 ──────────────────────────────────
 function kv(k, v) { return `<div class="kv"><span>${k}</span><b>${v}</b></div>`; }
+
+// 이번 달 누적 — 한도를 걸어 뒀으면 남은 금액까지 보여준다
+function budgetRow() {
+  const used = monthCost(), lim = budget();
+  const n = monthLog().length;
+  if (lim <= 0) return kv(`이번 달 ${n}회`, `${usd(used)} <small>(${krw(used)})</small>`);
+  const over = used >= lim;
+  return kv(`이번 달 ${n}회 <small>/ 한도 ${usd(lim)}</small>`,
+    `<b style="color:${over ? '#dc2626' : 'inherit'}">${usd(used)}</b> <small>(${over ? '한도 초과' : '남은 금액 ' + usd(lim - used)})</small>`);
+}
 
 function renderInfo() {
   const model = getModel();
@@ -691,10 +730,12 @@ function renderInfo() {
       ${sAvg != null ? kv('검색 및 분석 평균', `${usd(sAvg)} <small>(${krw(sAvg)})</small>`) : ''}
       ${dAvg != null ? kv('기사요약 평균', `${usd(dAvg)} <small>(${krw(dAvg)})</small>`) : ''}
       ${kv(`지금까지 ${log.length}회 누계`, `${usd(total)} <small>(${krw(total)})</small>`)}
+      ${budgetRow()}
       <p class="tiny">이 기기에서 실제로 쓴 토큰·검색 횟수로 계산한 값이에요.
         모델을 바꾸면 평균도 달라집니다.</p>`
     : `
       ${kv('예상 1회 비용', `${usd(estLo)} ~ ${usd(estHi)}`)}
+      ${budget() > 0 ? budgetRow() : ''}
       <p class="tiny">아직 검색 기록이 없어 <b>대략치</b>예요. 한 번 검색하면 실제 사용량으로 다시 계산해 보여줍니다.</p>`;
 
   $('infoBody').innerHTML = `
@@ -776,6 +817,7 @@ function bindTabs() {
 function openSheet() {
   $('apiKey').value = getKey();
   $('model').value = getModel();
+  $('budget').value = localStorage.getItem(K_BUDGET) || '';
   $('sheet').classList.remove('hidden');
 }
 function bindSheet() {
@@ -786,6 +828,8 @@ function bindSheet() {
     const k = $('apiKey').value.trim();
     if (k) localStorage.setItem(K_KEY, k); else localStorage.removeItem(K_KEY);
     localStorage.setItem(K_MODEL, $('model').value);
+    const b = $('budget').value.trim();
+    if (b) localStorage.setItem(K_BUDGET, b); else localStorage.removeItem(K_BUDGET);
     $('sheet').classList.add('hidden');
     if (!$('view-info').classList.contains('hidden')) renderInfo();   // 모델이 바뀌었을 수 있다
   };
